@@ -54,6 +54,16 @@
         .qty-num:focus { outline: none; }
         .qty-state { font-size: 22px; font-weight: 900; line-height: 1; }
 
+        /* ── Product image ── */
+        .item-img-wrap { width: 44px; height: 44px; border-radius: 10px; overflow: hidden; flex-shrink: 0; background: #f1f5f9; display: flex; align-items: center; justify-content: center; border: 1.5px dashed #cbd5e1; transition: border-color .15s; }
+        .item-img-wrap:active { border-color: #2563eb; }
+        .item-img-wrap.has-img { border: none; }
+        .item-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+        /* ── Image viewer ── */
+        #img-viewer { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #img-viewer img { max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 12px; }
+
         /* ── Delete / trash ── */
         .del-btn { color: #fca5a5; transition: color .15s, background .15s; flex-shrink: 0; }
         .del-btn:active { color: #ef4444; }
@@ -138,6 +148,18 @@
     </div>
 
     <div id="inventory-list" class="px-3 pt-3 space-y-3"></div>
+</div>
+
+<!-- Hidden file input for camera/gallery -->
+<input id="img-file-input" type="file" accept="image/*" class="hidden">
+
+<!-- Full-screen image viewer -->
+<div id="img-viewer" class="hidden" onclick="closeImgViewer()">
+    <img id="img-viewer-img" src="" alt="">
+    <div class="flex gap-4 mt-5" onclick="event.stopPropagation()">
+        <button onclick="deleteCurrentImage()" class="px-6 py-3 rounded-2xl bg-red-500 text-white font-semibold text-base">🗑 מחק תמונה</button>
+        <button onclick="closeImgViewer()" class="px-6 py-3 rounded-2xl bg-white/20 text-white font-semibold text-base">סגור</button>
+    </div>
 </div>
 
 <!-- FAB -->
@@ -654,11 +676,12 @@ function _updateCurrentEl(el, val) {
 }
 
 function deleteItem(idx) {
-    const name = data[currentWh][idx].name;
-    showConfirm(`למחוק את "${name}"?`, '', () => {
+    const item = data[currentWh][idx];
+    showConfirm(`למחוק את "${item.name}"?`, '', async () => {
+        if (item.imgId) await dbDelImg(item.imgId).catch(()=>{});
         data[currentWh].splice(idx, 1);
         save(); renderList(currentWh); renderWhSelector();
-        showToast(`"${name}" נמחק`);
+        showToast(`"${item.name}" נמחק`);
     });
 }
 
@@ -714,6 +737,9 @@ function renderList(wh) {
                         <div class="item-card">
                             <!-- Name row -->
                             <div class="item-name-row">
+                                <button id="img-wrap-${item.originalIdx}"
+                                    onclick="handleImgTap(${item.originalIdx})"
+                                    class="item-img-wrap">📷</button>
                                 <input type="text" value="${item.name}"
                                     onblur="updateItemField(${item.originalIdx},'name',this.value)"
                                     onkeydown="if(event.key==='Enter')this.blur()"
@@ -756,14 +782,143 @@ function renderList(wh) {
             </div>
         </details>`;
     }).join('');
+
+    loadImagesForList(wh);
+}
+
+// ── IndexedDB for images ──────────────────────────────────────────────────
+let _db = null;
+function openImgDB() {
+    return new Promise((res, rej) => {
+        const req = indexedDB.open('malai-images', 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore('imgs');
+        req.onsuccess  = e => { _db = e.target.result; res(); };
+        req.onerror    = rej;
+    });
+}
+function dbSaveImg(id, dataUrl) {
+    return new Promise((res, rej) => {
+        const tx = _db.transaction('imgs','readwrite');
+        tx.objectStore('imgs').put(dataUrl, id);
+        tx.oncomplete = res; tx.onerror = rej;
+    });
+}
+function dbGetImg(id) {
+    return new Promise((res, rej) => {
+        const tx = _db.transaction('imgs','readonly');
+        const req = tx.objectStore('imgs').get(id);
+        req.onsuccess = e => res(e.target.result); req.onerror = rej;
+    });
+}
+function dbDelImg(id) {
+    return new Promise(res => {
+        const tx = _db.transaction('imgs','readwrite');
+        tx.objectStore('imgs').delete(id);
+        tx.oncomplete = res;
+    });
+}
+
+// ── Image compress ────────────────────────────────────────────────────────
+function compressImage(file) {
+    return new Promise(res => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const MAX = 800;
+            let { width: w, height: h } = img;
+            if (w > MAX || h > MAX) {
+                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                else       { w = Math.round(w * MAX / h); h = MAX; }
+            }
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            res(c.toDataURL('image/jpeg', 0.72));
+        };
+        img.src = url;
+    });
+}
+
+// ── Image picker ──────────────────────────────────────────────────────────
+let _imgPickerIdx = null;
+function handleImgTap(idx) {
+    const item = data[currentWh][idx];
+    if (item.imgId) {
+        // has image → view it
+        dbGetImg(item.imgId).then(url => { if (url) openImgViewer(url, idx); });
+    } else {
+        // no image → pick one
+        _imgPickerIdx = idx;
+        document.getElementById('img-file-input').click();
+    }
+}
+
+document.getElementById('img-file-input').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file || _imgPickerIdx === null) return;
+    const idx  = _imgPickerIdx;
+    _imgPickerIdx = null;
+    e.target.value = '';
+
+    const item = data[currentWh][idx];
+    if (!item.imgId) { item.imgId = Date.now() + '-' + Math.random().toString(36).slice(2,7); save(); }
+
+    const dataUrl = await compressImage(file);
+    await dbSaveImg(item.imgId, dataUrl);
+
+    const wrap = document.getElementById(`img-wrap-${idx}`);
+    if (wrap) { wrap.innerHTML = `<img src="${dataUrl}" alt="">`; wrap.classList.add('has-img'); }
+    showToast('תמונה נשמרה');
+});
+
+// ── Image viewer ──────────────────────────────────────────────────────────
+let _viewerIdx = null;
+function openImgViewer(url, idx) {
+    _viewerIdx = idx;
+    document.getElementById('img-viewer-img').src = url;
+    document.getElementById('img-viewer').classList.remove('hidden');
+}
+function closeImgViewer() {
+    document.getElementById('img-viewer').classList.add('hidden');
+    document.getElementById('img-viewer-img').src = '';
+    _viewerIdx = null;
+}
+async function deleteCurrentImage() {
+    if (_viewerIdx === null) return;
+    const item = data[currentWh][_viewerIdx];
+    if (item.imgId) { await dbDelImg(item.imgId); delete item.imgId; save(); }
+    closeImgViewer();
+    const wrap = document.getElementById(`img-wrap-${_viewerIdx}`);
+    if (wrap) { wrap.innerHTML = '📷'; wrap.classList.remove('has-img'); }
+    showToast('תמונה נמחקה');
+}
+
+// ── Load images after render ──────────────────────────────────────────────
+async function loadImagesForList(wh) {
+    if (!_db) return;
+    const items = data[wh] || [];
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item.imgId) continue;
+        const url = await dbGetImg(item.imgId);
+        if (!url) continue;
+        const wrap = document.getElementById(`img-wrap-${i}`);
+        if (wrap) { wrap.innerHTML = `<img src="${url}" alt="">`; wrap.classList.add('has-img'); }
+    }
 }
 
 // ── Service Worker ────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 // ── Init ──────────────────────────────────────────────────────────────────
-renderWhSelector();
-renderList(currentWh);
+openImgDB().then(() => {
+    renderWhSelector();
+    renderList(currentWh);
+}).catch(() => {
+    renderWhSelector();
+    renderList(currentWh);
+});
 </script>
 </body>
 </html>
