@@ -238,7 +238,7 @@
         <div class="sheet-handle"></div>
         <h2 class="text-base font-bold text-slate-500 text-center mb-5 tracking-wide">הגדרות</h2>
         <div class="space-y-2 pb-2">
-            <button onclick="closeSettings();setTimeout(()=>showConfirm('לאפס את כל הכמויות?','כניסה ומשיכה של כל המוצרים ייאפסו לאפס',resetAllQty),80)"
+            <button onclick="closeSettings();setTimeout(()=>openPasswordCheck(()=>showConfirm('לאפס את כל הכמויות?','כניסה ומשיכה של כל המוצרים ייאפסו לאפס',resetAllQty)),80)"
                 class="action-opt bg-orange-50" style="border:1.5px solid #fed7aa">
                 <span class="icon">🔄</span>
                 <div>
@@ -248,6 +248,36 @@
             </button>
         </div>
         <button onclick="closeSettings()" class="w-full py-3.5 text-slate-400 font-medium text-sm mt-1">סגור</button>
+    </div>
+</div>
+
+<!-- ══ PASSWORD SHEET ═══════════════════════════════════════════════ -->
+<div id="password-sheet" class="backdrop hidden" onclick="if(event.target===this)closePasswordCheck()">
+    <div class="sheet" onclick="event.stopPropagation()">
+        <div class="sheet-handle"></div>
+        <h2 class="text-lg font-bold text-slate-800 text-center mb-1">הזיני סיסמה</h2>
+        <p class="text-sm text-slate-400 text-center mb-5">נדרשת אימות לפעולה זו</p>
+        <input id="password-input" type="password" inputmode="numeric" placeholder="••••"
+            class="field-input mb-5 text-center text-3xl tracking-[0.5em] font-bold">
+        <p id="password-error" class="text-center text-red-500 text-sm mb-3 hidden">סיסמה שגויה, נסי שוב</p>
+        <div class="flex gap-3">
+            <button onclick="closePasswordCheck()" class="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-semibold">ביטול</button>
+            <button onclick="submitPassword()" class="flex-1 py-3.5 rounded-2xl bg-blue-600 text-white font-semibold">אישור</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══ RENAME CATEGORY MODAL ════════════════════════════════════════ -->
+<div id="rename-cat-modal" class="backdrop hidden" onclick="if(event.target===this)closeRenameCat()">
+    <div class="sheet" onclick="event.stopPropagation()">
+        <div class="sheet-handle"></div>
+        <h2 class="text-lg font-bold text-slate-800 mb-5">שינוי שם קטגוריה</h2>
+        <label class="field-label">שם חדש</label>
+        <input id="rename-cat-input" type="text" class="field-input mb-5">
+        <div class="flex gap-3">
+            <button onclick="closeRenameCat()" class="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-semibold">ביטול</button>
+            <button onclick="submitRenameCat()" class="flex-1 py-3.5 rounded-2xl bg-blue-600 text-white font-semibold">שמירה</button>
+        </div>
     </div>
 </div>
 
@@ -368,6 +398,51 @@ document.getElementById('confirm-ok-btn').addEventListener('click', () => {
     if (_confirmCb) _confirmCb();
     closeConfirm();
 });
+
+// ── Password check ────────────────────────────────────────────────────────
+const APP_PASSWORD = '2885';
+let _passwordCb = null;
+function openPasswordCheck(cb) {
+    _passwordCb = cb;
+    document.getElementById('password-input').value = '';
+    document.getElementById('password-error').classList.add('hidden');
+    document.getElementById('password-sheet').classList.remove('hidden');
+    setTimeout(() => document.getElementById('password-input').focus(), 150);
+}
+function closePasswordCheck() {
+    document.getElementById('password-sheet').classList.add('hidden');
+    _passwordCb = null;
+}
+function submitPassword() {
+    if (document.getElementById('password-input').value === APP_PASSWORD) {
+        const cb = _passwordCb;
+        closePasswordCheck();
+        cb && cb();
+    } else {
+        document.getElementById('password-input').value = '';
+        document.getElementById('password-error').classList.remove('hidden');
+    }
+}
+document.getElementById('password-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+
+// ── Rename category ───────────────────────────────────────────────────────
+let _renameCatOld = null;
+function openRenameCat(catName) {
+    _renameCatOld = catName;
+    document.getElementById('rename-cat-input').value = catName;
+    document.getElementById('rename-cat-modal').classList.remove('hidden');
+    setTimeout(() => { const el = document.getElementById('rename-cat-input'); el.focus(); el.select(); }, 150);
+}
+function closeRenameCat() {
+    document.getElementById('rename-cat-modal').classList.add('hidden');
+    _renameCatOld = null;
+}
+function submitRenameCat() {
+    const newName = document.getElementById('rename-cat-input').value.trim();
+    if (newName && newName !== _renameCatOld) renameCategory(_renameCatOld, newName);
+    closeRenameCat();
+}
+document.getElementById('rename-cat-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitRenameCat(); });
 
 // ── Settings sheet ───────────────────────────────────────────────────────
 function openSettings()  { document.getElementById('settings-sheet').classList.remove('hidden'); }
@@ -611,14 +686,12 @@ function renderList(wh) {
         return `
         <details class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <summary class="flex items-center gap-2 px-4 py-3 bg-slate-50 select-none">
-                <input type="text" value="${group}"
-                    onblur="renameCategory('${group}',this.value)"
-                    onkeydown="if(event.key==='Enter')this.blur()"
-                    onclick="event.stopPropagation()"
-                    class="bg-transparent font-bold text-slate-700 text-base focus:outline-none flex-grow min-w-0">
+                <span class="font-bold text-slate-700 text-base flex-grow min-w-0 truncate">${group}</span>
                 <span class="text-slate-400 text-xs flex-shrink-0">${gItems.length ? gItems.length+' פריטים' : 'ריק'}</span>
+                <button onclick="event.stopPropagation();openRenameCat('${group}')"
+                    class="w-8 h-8 flex items-center justify-center text-slate-400 rounded-xl flex-shrink-0 text-base">✏️</button>
                 <button onclick="event.stopPropagation();deleteCategory('${group}')"
-                    class="cat-del-btn w-7 h-7 flex items-center justify-center text-base rounded-lg text-red-300">🗑</button>
+                    class="cat-del-btn w-8 h-8 flex items-center justify-center rounded-xl text-red-300 flex-shrink-0 text-base">🗑</button>
                 <span class="text-slate-400 text-xs flex-shrink-0">▾</span>
             </summary>
 
