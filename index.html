@@ -343,7 +343,7 @@ let whOrder  = JSON.parse(localStorage.getItem('malai-order') || 'null') || Obje
 let catStore = JSON.parse(localStorage.getItem('malai-cats')  || 'null') || buildCatStore();
 let currentWh = whOrder[0];
 
-// migrate old qty → entry/withdrawal
+// migrate old qty → entry/withdrawal + one-time quantity reset
 (function migrate() {
     let changed = false;
     for (const wh of Object.keys(data)) {
@@ -358,6 +358,15 @@ let currentWh = whOrder[0];
     }
     if (changed) save();
 })();
+
+// reset all quantities once (v2)
+if (!localStorage.getItem('malai-v2-reset')) {
+    for (const wh of Object.keys(data)) {
+        data[wh].forEach(item => { item.entry = 0; item.withdrawal = 0; });
+    }
+    save();
+    localStorage.setItem('malai-v2-reset', '1');
+}
 
 function buildCatStore() {
     const s = {};
